@@ -15,10 +15,13 @@ class SQLNetCondPredictor(nn.Module):
         self.gpu = gpu
         self.use_ca = use_ca
 
+        # for column number
         self.cond_num_lstm = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
         self.cond_num_att = nn.Linear(N_h, 1)
+        # nn.Linear(N_h, 5) is U_1_#col
+        # nn.Linear(N_h, N_h) is U_2_#col
         self.cond_num_out = nn.Sequential(nn.Linear(N_h, N_h),
                 nn.Tanh(), nn.Linear(N_h, 5))
         self.cond_num_name_enc = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
@@ -28,6 +31,7 @@ class SQLNetCondPredictor(nn.Module):
         self.cond_num_col2hid1 = nn.Linear(N_h, 2*N_h)
         self.cond_num_col2hid2 = nn.Linear(N_h, 2*N_h)
 
+        # for column slot
         self.cond_col_lstm = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
@@ -44,6 +48,8 @@ class SQLNetCondPredictor(nn.Module):
         self.cond_col_out_col = nn.Linear(N_h, N_h)
         self.cond_col_out = nn.Sequential(nn.ReLU(), nn.Linear(N_h, 1))
 
+
+        # for op slot
         self.cond_op_lstm = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
@@ -51,14 +57,19 @@ class SQLNetCondPredictor(nn.Module):
             self.cond_op_att = nn.Linear(N_h, N_h)
         else:
             self.cond_op_att = nn.Linear(N_h, 1)
+        # U_q_op
         self.cond_op_out_K = nn.Linear(N_h, N_h)
         self.cond_op_name_enc = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
+        # U_c_op
         self.cond_op_out_col = nn.Linear(N_h, N_h)
-        self.cond_op_out = nn.Sequential(nn.Linear(N_h, N_h), nn.Tanh(),
-                nn.Linear(N_h, 3))
+        # nn.Linear(N_h, 3) is U_1_op
 
+        self.cond_op_out = nn.Sequential(nn.Linear(N_h, N_h), nn.Tanh(),nn.Linear(N_h, 3))
+
+
+        # for value slot
         self.cond_str_lstm = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
@@ -111,7 +122,7 @@ class SQLNetCondPredictor(nn.Module):
         if reinforce:
             raise NotImplementedError('Our model doesn\'t have RL')
 
-        # Predict the number of conditions
+# Predict the number of conditions
         # First use column embeddings to calculate the initial hidden unit
         # Then run the LSTM and predict condition number.
         e_num_col, col_num = col_name_encode(col_inp_var, col_name_len,
@@ -141,7 +152,9 @@ class SQLNetCondPredictor(nn.Module):
             h_num_enc)).sum(1)
         cond_num_score = self.cond_num_out(K_cond_num)
 
-        #Predict the columns of conditions
+
+
+#Predict the columns of conditions
         e_cond_col, _ = col_name_encode(col_inp_var, col_name_len, col_len,
                 self.cond_col_name_enc)
 
@@ -171,7 +184,10 @@ class SQLNetCondPredictor(nn.Module):
             if num < max_col_num:
                 cond_col_score[b, num:] = -100
 
-        #Predict the operator of conditions
+
+
+#Predict the operator of conditions
+
         chosen_col_gt = []
         if gt_cond is None:
             cond_nums = np.argmax(cond_num_score.data.cpu().numpy(), axis=1)
@@ -182,6 +198,7 @@ class SQLNetCondPredictor(nn.Module):
             chosen_col_gt = [ [x[0] for x in one_gt_cond] for 
                     one_gt_cond in gt_cond]
 
+        # compute E_col
         e_cond_col, _ = col_name_encode(col_inp_var, col_name_len,
                 col_len, self.cond_op_name_enc)
         col_emb = []
@@ -191,15 +208,19 @@ class SQLNetCondPredictor(nn.Module):
                 (4 - len(chosen_col_gt[b])))  # Pad the columns to maximum (4)
             col_emb.append(cur_col_emb)
         col_emb = torch.stack(col_emb)
-
+        # # compute the hidden states output of lstm corresponding to question
         h_op_enc, _ = run_lstm(self.cond_op_lstm, x_emb_var, x_len)
         if self.use_ca:
+            #  compute v
+            # using multiplicative attention
             op_att_val = torch.matmul(self.cond_op_att(h_op_enc).unsqueeze(1),
                     col_emb.unsqueeze(3)).squeeze()
             for idx, num in enumerate(x_len):
                 if num < max_x_len:
                     op_att_val[idx, :, num:] = -100
+            # L-dimension attention weight
             op_att = self.softmax(op_att_val.view(B*4, -1)).view(B, 4, -1)
+            # compute E_Q|col
             K_cond_op = (h_op_enc.unsqueeze(1) * op_att.unsqueeze(3)).sum(2)
         else:
             op_att_val = self.cond_op_att(h_op_enc).squeeze()
@@ -208,11 +229,14 @@ class SQLNetCondPredictor(nn.Module):
                     op_att_val[idx, num:] = -100
             op_att = self.softmax(op_att_val)
             K_cond_op = (h_op_enc * op_att.unsqueeze(2)).sum(1).unsqueeze(1)
-
+        # compute P_op(i|Q,col)
         cond_op_score = self.cond_op_out(self.cond_op_out_K(K_cond_op) +
                 self.cond_op_out_col(col_emb)).squeeze()
 
-        #Predict the string of conditions
+
+
+
+#Predict the string of conditions
         h_str_enc, _ = run_lstm(self.cond_str_lstm, x_emb_var, x_len)
         e_cond_col, _ = col_name_encode(col_inp_var, col_name_len,
                 col_len, self.cond_str_name_enc)
@@ -234,9 +258,7 @@ class SQLNetCondPredictor(nn.Module):
             g_ext = g_str_s.unsqueeze(3)
             col_ext = col_emb.unsqueeze(2).unsqueeze(2)
 
-            cond_str_score = self.cond_str_out(
-                    self.cond_str_out_h(h_ext) + self.cond_str_out_g(g_ext) +
-                    self.cond_str_out_col(col_ext)).squeeze()
+            cond_str_score = self.cond_str_out(self.cond_str_out_h(h_ext) + self.cond_str_out_g(g_ext) + self.cond_str_out_col(col_ext)).squeeze()
             for b, num in enumerate(x_len):
                 if num < max_x_len:
                     cond_str_score[b, :, :, num:] = -100

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="d56121f5-2277-4057-b0d1-1c289ba79f7f" name="1701" url="http://202.202.5.140">
+        <fileTransfer host="202.202.5.140" port="22" rootFolder="/home/zj1701/SQLNet-master" accessType="SFTP">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" />
+          </advancedOptions>
+          <option name="port" value="22" />
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

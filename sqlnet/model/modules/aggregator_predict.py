@@ -25,6 +25,8 @@ class AggPredictor(nn.Module):
         else:
             print "Not using column attention on aggregator predicting"
             self.agg_att = nn.Linear(N_h, 1)
+        # nn.Linear(N_h, 6) is U_a 6 * d
+        # nn.Linear(N_h, N_h) is U_agg
         self.agg_out = nn.Sequential(nn.Linear(N_h, N_h),
                 nn.Tanh(), nn.Linear(N_h, 6))
         self.softmax = nn.Softmax()
@@ -33,16 +35,19 @@ class AggPredictor(nn.Module):
             col_len=None, col_num=None, gt_sel=None):
         B = len(x_emb_var)
         max_x_len = max(x_len)
-
+        # compute the hidden states output of lstm corresponding to question
         h_enc, _ = run_lstm(self.agg_lstm, x_emb_var, x_len)
         if self.use_ca:
-            e_col, _ = col_name_encode(col_inp_var, col_name_len, 
-                    col_len, self.agg_col_name_enc)
+            #  compute the E_col
+            e_col, _ = col_name_encode(col_inp_var, col_name_len,col_len, self.agg_col_name_enc)
+
+
             chosen_sel_idx = torch.LongTensor(gt_sel)
             aux_range = torch.LongTensor(range(len(gt_sel)))
             if x_emb_var.is_cuda:
                 chosen_sel_idx = chosen_sel_idx.cuda()
                 aux_range = aux_range.cuda()
+            # chosen_e_col is v
             chosen_e_col = e_col[aux_range, chosen_sel_idx]
             att_val = torch.bmm(self.agg_att(h_enc), 
                     chosen_e_col.unsqueeze(2)).squeeze()
@@ -52,8 +57,10 @@ class AggPredictor(nn.Module):
         for idx, num in enumerate(x_len):
             if num < max_x_len:
                 att_val[idx, num:] = -100
+        # att is attention weight
         att = self.softmax(att_val)
 
+        # K_agg is E_Q|col
         K_agg = (h_enc * att.unsqueeze(2).expand_as(h_enc)).sum(1)
         agg_score = self.agg_out(K_agg)
         return agg_score

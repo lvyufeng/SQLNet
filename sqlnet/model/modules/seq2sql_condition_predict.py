@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
 from net_utils import run_lstm
+from torch.distributions import Categorical
 
 class Seq2SQLCondPredictor(nn.Module):
     def __init__(self, N_word, N_h, N_depth, max_col_num, max_tok_num, gpu):

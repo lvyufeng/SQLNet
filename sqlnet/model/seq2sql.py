@@ -185,16 +185,21 @@ class Seq2SQL(nn.Module):
 
         cur_reward = rewards[:]
         eof = self.SQL_TOK.index('<END>')
+
+        loss = 0
         for t in range(len(cond_score[1])):
             reward_inp = torch.FloatTensor(cur_reward).unsqueeze(1)
             if self.gpu:
                 reward_inp = reward_inp.cuda()
-            cond_score[1][t].reinforce(reward_inp)
+            # cond_score[1][t].reinforce(reward_inp)
+            loss -= cond_score[1][t].log_prob * reward_inp
+
 
             for b in range(len(rewards)):
                 if cond_score[1][t][b].data.cpu().numpy()[0] == eof:
                     cur_reward[b] = 0
-        torch.autograd.backward(cond_score[1], [None for _ in cond_score[1]])
+        # torch.autograd.backward(cond_score[1], [None for _ in cond_score[1]])
+        loss.backward()
         return
 
     def check_acc(self, vis_info, pred_queries, gt_queries, pred_entry):
